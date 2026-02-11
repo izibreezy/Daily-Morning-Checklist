@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Утренний чеклист</title>
+  <meta name="description" content="Ежедневный утренний чеклист (PWA)" />
+  <meta name="theme-color" content="#111111" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+
+  <!-- iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+  <style>
+    :root { --fg:#111; --bg:#fff; --muted:#6b6b6b; --line:#e8e8e8; --card:#fff; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, system-ui, Arial; margin: 16px; background: var(--bg); color: var(--fg); }
+    header { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; }
+    h1 { margin:0; font-size:22px; }
+    .date { font-size:13px; color: var(--muted); margin-top:4px; }
+    .pill { font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:#fafafa; white-space:nowrap; }
+    .card { margin-top:14px; padding:14px; border:1px solid var(--line); border-radius:14px; background: var(--card); }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .progress { margin-top:10px; height:10px; border-radius:999px; background:#efefef; overflow:hidden; }
+    .bar { height:100%; width:0%; background:#111; transition: width .15s linear; }
+    ul { list-style:none; padding:0; margin:10px 0 0 0; }
+    li { display:grid; grid-template-columns: 24px 1fr auto; gap:10px; align-items:center; padding:10px 0; border-top:1px solid #f2f2f2; }
+    li:first-child { border-top:0; }
+    input[type="checkbox"] { width:20px; height:20px; }
+    .text { font-size:16px; line-height:1.25; }
+    .muted { color: var(--muted); font-size:12px; }
+    .btns { display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; }
+    button {
+      font-size:15px; padding:10px 12px; border-radius:12px;
+      border:1px solid var(--line); background:#fff; color:var(--fg);
+    }
+    button.primary { background:#111; color:#fff; border-color:#111; }
+    button.danger { border-color:#ffd5d5; background:#fff5f5; }
+    button.small { font-size:13px; padding:7px 10px; border-radius:10px; }
+    textarea, input[type="text"], input[type="number"] {
+      width:100%; border:1px solid var(--line); border-radius:12px; padding:10px; font-size:15px;
+    }
+    textarea { min-height:90px; resize:vertical; }
+    .right { justify-self:end; display:flex; gap:6px; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; padding:2px 6px; border:1px solid var(--line); border-radius:8px; background:#fafafa; }
+
+    /* Modal */
+    dialog { width:min(720px, 96vw); border:1px solid var(--line); border-radius:14px; padding:0; }
+    dialog::backdrop { background: rgba(0,0,0,.35); }
+    .modal-head { padding:14px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .modal-body { padding:14px; }
+    .grid { display:grid; gap:10px; }
+    .two { grid-template-columns: 1fr 1fr; }
+    @media (max-width: 520px) { .two { grid-template-columns: 1fr; } }
+
+    .item-editor { display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center; padding:8px 0; border-top:1px solid #f2f2f2; }
+    .item-editor:first-child { border-top:0; }
+    .item-actions { display:flex; gap:6px; }
+    .hint { margin-top:10px; font-size:12px; color: var(--muted); line-height:1.35; }
+    .toast { margin-top:10px; font-size:12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Утренний чеклист</h1>
+      <div class="date" id="today"></div>
+    </div>
+    <div class="row" style="gap:8px;">
+      <div class="pill" id="streak">Серия: 0</div>
+      <button class="small" id="openSettings">Настройки</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="row">
+      <div class="pill" id="count">0/0</div>
+      <div class="pill" id="pct">0%</div>
+    </div>
+    <div class="progress" aria-label="Прогресс">
+      <div class="bar" id="bar"></div>
+    </div>
+
+    <ul id="list"></ul>
+
+    <div class="btns">
+      <button id="reset">Сбросить сегодня</button>
+      <button class="primary" id="markDone">Отметить день</button>
+    </div>
+
+    <div class="hint">
+      • Автосброс каждый день по дате устройства. <br>
+      • “Отметить день” срабатывает при выполнении порога (по умолчанию 80%). <br>
+      • Для надёжности есть экспорт/импорт в настройках (на случай чистки данных iOS).
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="pill">Заметка на утро</div>
+      <div class="pill" id="saved">—</div>
+    </div>
+    <div style="margin-top:10px;">
+      <textarea id="note" placeholder="1 цель • 1 риск • 1 благодарность / или любой короткий план"></textarea>
+    </div>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <dialog id="settings">
+    <div class="modal-head">
+      <div>
+        <div style="font-weight:700;">Настройки</div>
+        <div class="muted">Редактирование пунктов, порог дня, экспорт/импорт</div>
+      </div>
+      <button class="small" id="closeSettings">Закрыть</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="grid two">
+        <div>
+          <label class="muted">Порог “день выполнен” (%)</label>
+          <input type="number" id="threshold" min="1" max="100" step="1" />
+          <div class="hint">Рекомендация: 70–85% (чтобы “день” не ломался из‑за 1 пункта).</div>
+        </div>
+        <div>
+          <label class="muted">Название чеклиста</label>
+          <input type="text" id="titleInput" />
+          <div class="hint">Меняет заголовок вверху страницы.</div>
+        </div>
+      </div>
+
+      <div style="margin-top:14px; font-weight:700;">Пункты</div>
+      <div class="hint">Изменения применяются сразу. Перестановка — кнопками ↑ ↓ (максимально надёжно на iOS).</div>
+
+      <div id="itemsEditor" style="margin-top:8px;"></div>
+
+      <div class="grid two" style="margin-top:12px;">
+        <div>
+          <label class="muted">Добавить пункт</label>
+          <div class="row" style="gap:8px; margin-top:6px;">
+            <input type="text" id="newItemText" placeholder="Например: 10 минут прогулка" />
+            <button class="small" id="addItem">Добавить</button>
+          </div>
+        </div>
+        <div>
+          <label class="muted">Шаблон (быстрая замена)</label>
+          <div class="row" style="gap:8px; margin-top:6px;">
+            <button class="small" id="tplDefault">Базовый</button>
+            <button class="small" id="tplMinimal">Минимум</button>
+            <button class="small" id="tplFitness">Фокус на форме</button>
+          </div>
+          <div class="hint">Шаблон заменяет список пунктов (не трогает стрик).</div>
+        </div>
+      </div>
+
+      <div style="margin-top:16px; font-weight:700;">Резервная копия</div>
+      <div class="hint">
+        Экспортируй JSON и сохрани в “Файлы”/iCloud/Telegram “Избранное”.
+        Это самый простой способ восстановиться после переустановки/очистки.
+      </div>
+
+      <div class="grid two" style="margin-top:10px;">
+        <button id="exportBtn">Экспорт (копировать JSON)</button>
+        <button id="importBtn">Импорт (вставить JSON)</button>
+      </div>
+
+      <div style="margin-top:10px;" class="grid">
+        <label class="muted">Поле импорта/экспорта</label>
+        <textarea id="backupBox" placeholder='Нажми "Экспорт", или вставь JSON и нажми "Импорт"'></textarea>
+        <div class="toast" id="toast"></div>
+      </div>
+
+      <div style="margin-top:14px;" class="grid">
+        <button class="danger" id="wipeAll">Стереть всё (осторожно)</button>
+      </div>
+    </div>
+  </dialog>
+
+<script>
+(() => {
+  // ====== PWA SW ======
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(()=>{});
+    });
+  }
+
+  // ====== Storage Key ======
+  const KEY = "morning_checklist_v2";
+
+  // ====== Defaults ======
+  const DEFAULT_STATE = () => ({
+    meta: {
+      title: "Утренний чеклист",
+      thresholdPct: 80
+    },
+    day: {
+      date: isoDateLocal(),
+      items: defaultItems(), // array {id,text,done}
+      note: ""
+    },
+    history: {
+      streak: 0,
+      lastDoneDate: null
+    }
+  });
+
+  function defaultItems() {
+    const list = [
+      "Стакан воды",
+      "5 минут тишина/дыхание",
+      "План дня: 3 задачи",
+      "Лёгкая зарядка 5–10 минут",
+      "Завтрак/белок (по плану)",
+      "Быстрый порядок 3–5 минут"
+    ];
+    return list.map((t) => ({ id: uid(), text: t, done: false }));
+  }
+
+  function tplMinimal() {
+    return ["Вода","План 3 задачи","5–10 минут движение"].map(t => ({ id: uid(), text: t, done:false }));
+  }
+  function tplFitness() {
+    return [
+      "Вода + электролиты (если нужно)",
+      "10 минут зарядка/мобилити",
+      "Белок в первом приёме пищи",
+      "Короткая прогулка/свет 5–10 минут",
+      "План дня: 3 задачи",
+      "1 действие по дому (5 минут)"
+    ].map(t => ({ id: uid(), text: t, done:false }));
+  }
+
+  // ====== Date Helpers ======
+  function isoDateLocal(d = new Date()) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  function fmtDate(d = new Date()) {
+    return d.toLocaleDateString("ru-RU", { weekday:"long", year:"numeric", month:"long", day:"numeric" });
+  }
+  function yesterdayIso() {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return isoDateLocal(d);
+  }
+
+  // ====== ID ======
+  function uid() {
+    return Math.random().toString(16).slice(2) + Date.now().toString(16);
+  }
+
+  // ====== Load/Save ======
+  function load() {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return DEFAULT_STATE();
+    try {
+      const s = JSON.parse(raw);
+      return migrate(s);
+    } catch {
+      localStorage.removeItem(KEY);
+      return DEFAULT_STATE();
+    }
+  }
+  function save(s) {
+    localStorage.setItem(KEY, JSON.stringify(s));
+  }
+  function migrate(s) {
+    // lightweight forward-compat
+    if (!s.meta) s.meta = { title: "Утренний чеклист", thresholdPct: 80 };
+    if (!s.day) s.day = { date: isoDateLocal(), items: defaultItems(), note:"" };
+    if (!s.history) s.history = { streak:0, lastDoneDate:null };
+    if (!Array.isArray(s.day.items)) s.day.items = defaultItems();
+    if (typeof s.meta.thresholdPct !== "number") s.meta.thresholdPct = 80;
+    if (typeof s.meta.title !== "string") s.meta.title = "Утренний чеклист";
+    if (typeof s.day.note !== "string") s.day.note = "";
+    return s;
+  }
+
+  // ====== Daily rollover ======
+  function ensureToday(s) {
+    const today = isoDateLocal();
+    if (s.day.date !== today) {
+      s.day.date = today;
+      s.day.items = s.day.items.map(x => ({ ...x, done:false }));
+      s.day.note = "";
+      save(s);
+    }
+    return s;
+  }
+
+  // ====== Calc ======
+  function calc(s) {
+    const total = s.day.items.length;
+    const done = s.day.items.filter(x => x.done).length;
+    const pct = total ? Math.round((done/total)*100) : 0;
+    return { total, done, pct };
+  }
+
+  // ====== DOM ======
+  const elToday = document.getElementById("today");
+  const elCount = document.getElementById("count");
+  const elPct = document.getElementById("pct");
+  const elBar = document.getElementById("bar");
+  const elList = document.getElementById("list");
+  const elStreak = document.getElementById("streak");
+  const elNote = document.getElementById("note");
+  const elSaved = document.getElementById("saved");
+
+  const dlg = document.getElementById("settings");
+  const btnOpenSettings = document.getElementById("openSettings");
+  const btnCloseSettings = document.getElementById("closeSettings");
+
+  const elThreshold = document.getElementById("threshold");
+  const elTitleInput = document.getElementById("titleInput");
+  const elItemsEditor = document.getElementById("itemsEditor");
+  const elNewItemText = document.getElementById("newItemText");
+  const btnAddItem = document.getElementById("addItem");
+
+  const btnTplDefault = document.getElementById("tplDefault");
+  const btnTplMinimal = document.getElementById("tplMinimal");
+  const btnTplFitness = document.getElementById("tplFitness");
+
+  const btnExport = document.getElementById("exportBtn");
+  const btnImport = document.getElementById("importBtn");
+  const elBackupBox = document.getElementById("backupBox");
+  const elToast = document.getElementById("toast");
+  const btnWipeAll = document.getElementById("wipeAll");
+
+  const btnReset = document.getElementById("reset");
+  const btnMarkDone = document.getElementById("markDone");
+
+  // ====== State ======
+  let state = ensureToday(load());
+  renderAll();
+
+  // ====== Render ======
+  function renderAll() {
+    document.querySelector("h1").textContent = state.meta.title;
+    elToday.textContent = fmtDate(new Date());
+    elStreak.textContent = `Серия: ${state.history.streak || 0}`;
+
+    const { total, done, pct } = calc(state);
+    elCount.textContent = `${done}/${total}`;
+    elPct.textContent = `${pct}%`;
+    elBar.style.width = `${pct}%`;
+
+    // checklist
+    elList.innerHTML = "";
+    state.day.items.forEach((item, idx) => {
+      const li = document.createElement("li");
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!item.done;
+      cb.addEventListener("change", () => {
+        state.day.items[idx].done = cb.checked;
+        save(state);
+        renderAll();
+      });
+
+      const text = document.createElement("div");
+      text.className = "text";
+      text.textContent = item.text;
+
+      const right = document.createElement("div");
+      right.className = "right";
+
+      li.appendChild(cb);
+      li.appendChild(text);
+      li.appendChild(right);
+      elList.appendChild(li);
+    });
+
+    // note
+    elNote.value = state.day.note || "";
+    elSaved.textContent = "—";
+
+    // settings fields
+    elThreshold.value = String(state.meta.thresholdPct);
+    elTitleInput.value = state.meta.title;
+
+    renderItemsEditor();
+  }
+
+  function renderItemsEditor() {
+    elItemsEditor.innerHTML = "";
+    state.day.items.forEach((item, idx) => {
+      const row = document.createElement("div");
+      row.className = "item-editor";
+
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.value = item.text;
+      inp.addEventListener("input", () => {
+        state.day.items[idx].text = inp.value;
+        save(state);
+        toast("Сохранено");
+        renderAll();
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "item-actions";
+
+      const up = mkSmall("↑", () => move(idx, -1));
+      const down = mkSmall("↓", () => move(idx, +1));
+      const del = mkSmall("Удал.", () => remove(idx), true);
+
+      actions.appendChild(up);
+      actions.appendChild(down);
+      actions.appendChild(del);
+
+      row.appendChild(inp);
+      row.appendChild(actions);
+      elItemsEditor.appendChild(row);
+    });
+  }
+
+  function mkSmall(label, fn, danger=false) {
+    const b = document.createElement("button");
+    b.className = "small" + (danger ? " danger" : "");
+    b.textContent = label;
+    b.type = "button";
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  function move(i, delta) {
+    const j = i + delta;
+    if (j < 0 || j >= state.day.items.length) return;
+    const a = state.day.items;
+    [a[i], a[j]] = [a[j], a[i]];
+    save(state);
+    renderAll();
+    toast("Порядок обновлён");
+  }
+
+  function remove(i) {
+    state.day.items.splice(i, 1);
+    save(state);
+    renderAll();
+    toast("Удалено");
+  }
+
+  function toast(msg) {
+    elToast.textContent = msg;
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => elToast.textContent = "", 1200);
+  }
+
+  // ====== Note autosave ======
+  let noteTimer = null;
+  elNote.addEventListener("input", () => {
+    clearTimeout(noteTimer);
+    elSaved.textContent = "сохраняю…";
+    noteTimer = setTimeout(() => {
+      state.day.note = elNote.value;
+      save(state);
+      elSaved.textContent = "сохранено";
+    }, 200);
+  });
+
+  // ====== Buttons ======
+  btnReset.addEventListener("click", () => {
+    state.day.items = state.day.items.map(x => ({...x, done:false}));
+    state.day.note = "";
+    save(state);
+    renderAll();
+    alert("Сброшено на сегодня.");
+  });
+
+  btnMarkDone.addEventListener("click", () => {
+    const { total, done } = calc(state);
+    if (!total) return;
+
+    const need = state.meta.thresholdPct || 80;
+    const pct = Math.round((done/total)*100);
+
+    if (pct < need) {
+      alert(`Сейчас ${done}/${total} (${pct}%). Для “день выполнен” нужно минимум ${need}%.`);
+      return;
+    }
+
+    const today = isoDateLocal();
+    if (state.history.lastDoneDate === today) {
+      alert("Сегодня уже отмечено как выполнено.");
+      return;
+    }
+
+    const last = state.history.lastDoneDate;
+    state.history.streak = (last === yesterdayIso()) ? (state.history.streak + 1) : 1;
+    state.history.lastDoneDate = today;
+    save(state);
+    renderAll();
+    alert(`Готово. Серия: ${state.history.streak}`);
+  });
+
+  // ====== Settings open/close ======
+  btnOpenSettings.addEventListener("click", () => dlg.showModal());
+  btnCloseSettings.addEventListener("click", () => dlg.close());
+
+  // Settings change handlers
+  elThreshold.addEventListener("change", () => {
+    let v = parseInt(elThreshold.value, 10);
+    if (!Number.isFinite(v)) v = 80;
+    v = Math.max(1, Math.min(100, v));
+    state.meta.thresholdPct = v;
+    elThreshold.value = String(v);
+    save(state);
+    toast("Сохранено");
+  });
+
+  elTitleInput.addEventListener("change", () => {
+    const t = (elTitleInput.value || "").trim() || "Утренний чеклист";
+    state.meta.title = t;
+    save(state);
+    renderAll();
+    toast("Сохранено");
+  });
+
+  btnAddItem.addEventListener("click", () => {
+    const t = (elNewItemText.value || "").trim();
+    if (!t) return;
+    state.day.items.push({ id: uid(), text: t, done:false });
+    elNewItemText.value = "";
+    save(state);
+    renderAll();
+    toast("Пункт добавлен");
+  });
+
+  // Templates
+  btnTplDefault.addEventListener("click", () => {
+    state.day.items = defaultItems();
+    save(state);
+    renderAll();
+    toast("Шаблон применён");
+  });
+  btnTplMinimal.addEventListener("click", () => {
+    state.day.items = tplMinimal();
+    save(state);
+    renderAll();
+    toast("Шаблон применён");
+  });
+  btnTplFitness.addEventListener("click", () => {
+    state.day.items = tplFitness();
+    save(state);
+    renderAll();
+    toast("Шаблон применён");
+  });
+
+  // Backup
+  btnExport.addEventListener("click", async () => {
+    const json = JSON.stringify(state, null, 2);
+    elBackupBox.value = json;
+
+    try {
+      await navigator.clipboard.writeText(json);
+      toast("Экспорт скопирован в буфер");
+    } catch {
+      toast("Экспорт готов (скопируй вручную)");
+    }
+  });
+
+  btnImport.addEventListener("click", () => {
+    const txt = (elBackupBox.value || "").trim();
+    if (!txt) { alert("Вставь JSON в поле ниже."); return; }
+    try {
+      const obj = JSON.parse(txt);
+      state = ensureToday(migrate(obj));
+      save(state);
+      renderAll();
+      toast("Импорт выполнен");
+      alert("Импорт выполнен.");
+    } catch (e) {
+      alert("Не удалось импортировать: JSON некорректный.");
+    }
+  });
+
+  btnWipeAll.addEventListener("click", () => {
+    const ok = confirm("Точно стереть всё? Это удалит пункты, заметки и серию.");
+    if (!ok) return;
+    localStorage.removeItem(KEY);
+    state = ensureToday(DEFAULT_STATE());
+    save(state);
+    renderAll();
+    toast("Стерто");
+  });
+
+})();
+</script>
+</body>
+</html>
